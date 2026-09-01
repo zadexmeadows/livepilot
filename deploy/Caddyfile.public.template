@@ -1,0 +1,31 @@
+170.9.36.175.sslip.io {
+  encode zstd gzip
+
+  handle_path /api/* {
+    reverse_proxy api:4000
+  }
+
+  handle {
+    reverse_proxy web:3000
+  }
+}
+
+livepilot.170.9.36.175.sslip.io {
+  encode zstd gzip
+
+  basic_auth {
+    livepilot __LIVEPILOT_PASSWORD_HASH__
+  }
+
+  reverse_proxy livepilot-app:3000
+}
+
+browser.livepilot.170.9.36.175.sslip.io {
+  encode zstd gzip
+
+  basic_auth {
+    livepilot __LIVEPILOT_PASSWORD_HASH__
+  }
+
+  reverse_proxy livepilot-app:6080
+}

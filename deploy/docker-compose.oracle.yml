@@ -1,0 +1,39 @@
+name: livepilot
+
+services:
+  app:
+    container_name: livepilot-app
+    # Chrome records the hostname in persistent-profile locks. Keep it stable
+    # across container replacements so stale local processes can be detected.
+    hostname: livepilot-browser
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    shm_size: "2gb"
+    environment:
+      NODE_ENV: production
+      TZ: ${TZ:-Asia/Karachi}
+      DATABASE_URL: file:../data/app.db
+      APP_DATA_DIR: /app/data
+      APP_ORIGIN: https://livepilot.170.9.36.175.sslip.io
+      MIN_AUTOMATION_INTERVAL_SECONDS: "30"
+      PLAYWRIGHT_BROWSER_CHANNEL: chrome
+      MANUAL_BROWSER_EXECUTABLE: /usr/bin/google-chrome
+      VNC_PASSWORD: ${VNC_PASSWORD:?Set VNC_PASSWORD in deploy/.env}
+    ports:
+      - "127.0.0.1:3100:3000"
+      - "127.0.0.1:6080:6080"
+    volumes:
+      - ./data:/app/data:Z
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:./chromium-seccomp.json
+    networks:
+      - default
+      - ytmonitor_proxy
+
+networks:
+  ytmonitor_proxy:
+    external: true
+    name: ytmonitor_default

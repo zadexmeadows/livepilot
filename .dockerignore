@@ -1,0 +1,12 @@
+.git
+.next
+data
+deploy/data
+node_modules
+outputs
+playwright-report
+work
+*.log
+*.tsbuildinfo
+.env
+deploy/.env
