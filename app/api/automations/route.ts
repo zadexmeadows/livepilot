@@ -16,7 +16,6 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const raw = await request.json();
-    if (raw.start && automationController.streamlabsState().enabled) return Response.json({ error: "Save without starting, then restart Streamlabs mode to include the new automation." }, { status: 409 });
     const input = automationInputSchema.parse(raw);
     const account = await db.googleAccount.findUnique({ where: { id: input.googleAccountId } });
     if (!account) return Response.json({ error: "Select a valid connected Google account." }, { status: 400 });

@@ -7,6 +7,8 @@ import { emitDashboardEvent } from "@/lib/events";
 import { getSessionCompletionReason } from "./session-limits";
 import { isTransientBrowserError, MAX_TRANSIENT_RETRIES, retryDelaySeconds } from "./retry-policy";
 import { StreamlabsController } from "./streamlabs-controller";
+import { accountAccess } from "./account-access";
+import type { StreamlabsConfig } from "./streamlabs-controller";
 
 type Worker = { abort: AbortController; promise: Promise<void> };
 const terminal = new Set(["STOPPED", "COMPLETED", "AUTH_REQUIRED", "ERROR"]);
@@ -24,47 +26,24 @@ export class AutomationController {
   private workers = new Map<string, Worker>();
   private starting = new Set<string>();
   private streamlabs = new StreamlabsController();
-  private switchTask?: Promise<ReturnType<StreamlabsController["snapshot"]>>;
-  private resumeIntervals: string[] = [];
 
   constructor(private readonly delay = abortableDelay) {}
 
-  isRunning(id: string) { return this.workers.has(id) || this.streamlabs.isRunning(id); }
+  isRunning(id: string) { return this.workers.has(id); }
   runningCount() { return this.workers.size + this.streamlabs.runningCount(); }
   streamlabsState() { return this.streamlabs.snapshot(); }
 
-  async setStreamlabsMode(enabled: boolean) {
-    if (this.switchTask) throw new Error("A mode change is already in progress. Please wait.");
-    if (this.starting.size) throw new Error("An interval worker is starting. Please wait, then change modes.");
-    this.switchTask = this.changeMode(enabled);
-    try { return await this.switchTask; } finally { this.switchTask = undefined; }
-  }
-
-  private async changeMode(enabled: boolean) {
-    if (enabled) {
-      if (this.streamlabs.snapshot().enabled) return this.streamlabs.snapshot();
-      const rows = await db.automation.findMany({ where: { googleAccount: { status: "CONNECTED" } }, include: { googleAccount: true }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
-      if (!rows.length) throw new Error("Create an automation with a connected account first.");
-      this.resumeIntervals = [...this.workers.keys()];
-      await Promise.all(this.resumeIntervals.map(id => this.pauseInterval(id)));
-      return this.streamlabs.start(rows);
-    }
-    await this.streamlabs.stop("Streamlabs mode turned off. Previous interval workers may resume.");
-    const resume = this.resumeIntervals;
-    this.resumeIntervals = [];
-    // Clear only our transition guard before deliberately resuming the workers
-    // that were running before ON; never start drafts or previously stopped jobs.
-    for (const id of resume) await this.startInterval(id);
-    return this.streamlabs.snapshot();
-  }
+  streamlabsLoad() { return this.streamlabs.load(); }
+  streamlabsConfigure(config: StreamlabsConfig) { return this.streamlabs.configure(config); }
+  streamlabsStart(config?: StreamlabsConfig) { return this.streamlabs.start(config); }
+  streamlabsPause() { return this.streamlabs.pause(); }
+  streamlabsStop() { return this.streamlabs.stop(); }
 
   async beforeMutation(id: string) {
-    await this.switchTask;
     if (this.isRunning(id)) await this.stop(id);
   }
 
   async start(id: string) {
-    if (this.switchTask || this.streamlabs.snapshot().enabled) return { started: false, reason: "Streamlabs mode controls the sequence. Turn it off before starting interval workers." };
     return this.startInterval(id);
   }
 
@@ -86,11 +65,6 @@ export class AutomationController {
   }
 
   async pause(id: string) {
-    await this.switchTask;
-    if (this.streamlabs.isRunning(id)) {
-      this.resumeIntervals = [];
-      await this.streamlabs.stop("Streamlabs sequence paused manually. Turn it on to listen again.");
-    }
     await this.pauseInterval(id);
   }
 
@@ -103,11 +77,6 @@ export class AutomationController {
   }
 
   async stop(id: string) {
-    await this.switchTask;
-    if (this.streamlabs.isRunning(id)) {
-      this.resumeIntervals = [];
-      await this.streamlabs.stop();
-    }
     const worker = this.workers.get(id);
     worker?.abort.abort();
     if (worker) await worker.promise.catch(() => undefined);
@@ -116,9 +85,7 @@ export class AutomationController {
   }
 
   async stopAll() {
-    await this.switchTask;
     const sequenceCount = this.streamlabs.runningCount();
-    this.resumeIntervals = [];
     if (this.streamlabs.snapshot().enabled) await this.streamlabs.stop("Emergency Stop All.");
     const ids = [...this.workers.keys()];
     await Promise.all(ids.map((id) => this.stop(id)));
@@ -178,7 +145,7 @@ export class AutomationController {
             signal.throwIfAborted();
             await activityLog({ automationId: id, action: "BROWSER_READY", status: "RUNNING", message: `Isolated browser page opened for ${automation.googleAccount.displayName}.` });
           }
-          result = await sendChatMessage(page, automation.youtubeUrl, automation.message, signal);
+          result = await accountAccess.run(automation.googleAccountId, signal, () => sendChatMessage(page!, automation.youtubeUrl, automation.message, signal));
         } catch (error) {
           if (signal.aborted) return;
           if (!isTransientBrowserError(error)) throw error;

@@ -38,7 +38,8 @@ COPY --chown=livepilot:livepilot --from=builder /app/public ./public
 COPY --chown=livepilot:livepilot --from=builder /app/prisma ./prisma
 COPY --chown=livepilot:livepilot --from=builder /app/scripts ./scripts
 COPY --chown=livepilot:livepilot --from=builder /app/package.json ./package.json
-COPY --chmod=0755 deploy/docker-entrypoint.sh /usr/local/bin/livepilot-entrypoint
+COPY --chown=livepilot:livepilot --chmod=0755 deploy/docker-entrypoint.sh /usr/local/bin/livepilot-entrypoint
+RUN sed -i 's/\r$//' /usr/local/bin/livepilot-entrypoint
 
 USER livepilot
 

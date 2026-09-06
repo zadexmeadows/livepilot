@@ -32,6 +32,7 @@ export const browserManager={newPage:async(accountId)=>{
 export const activityLog=async(row)=>{state.logs.push(row)};
 export const emitDashboardEvent=()=>{};
 export const sendChatMessage=async()=>{state.calls++;const item=state.outcomes.shift();if(item instanceof Error)throw item;if(!item)throw Error('Unexpected send');return item};
+export const accountAccess={run:async(id,signal,work)=>{signal.throwIfAborted();return work()}};
 export const delay=(ms,signal)=>{state.delays.push(ms);return new Promise((resolve,reject)=>{
  if(signal.aborted){reject(new DOMException('Aborted','AbortError'));return;}
  const finish=()=>{signal.removeEventListener('abort',abort);resolve()};
@@ -41,7 +42,8 @@ export const delay=(ms,signal)=>{state.delays.push(ms);return new Promise((resol
   const mock = await import(mockUrl);
   mock.state.outcomes = [...outcomes];
   let code = controllerSource.replace('from "./session-limits"', `from "${limitsUrl}"`).replace('from "./retry-policy"', `from "${policyUrl}"`);
-  code = code.replace('import { StreamlabsController } from "./streamlabs-controller";', 'class StreamlabsController { enabled=false; snapshot(){return {enabled:this.enabled}} isRunning(){return this.enabled} runningCount(){return this.enabled?1:0} async start(){this.enabled=true;return this.snapshot()} async stop(){this.enabled=false;return this.snapshot()} }');
+  code = code.replace('import { StreamlabsController } from "./streamlabs-controller";', 'class StreamlabsController { enabled=false; snapshot(){return {enabled:this.enabled}} isRunning(){return this.enabled} runningCount(){return this.enabled?1:0} async load(){return this.snapshot()} async configure(){return this.snapshot()} async start(){this.enabled=true;return this.snapshot()} async pause(){this.enabled=false;return this.snapshot()} async stop(){this.enabled=false;return this.snapshot()} }');
+  code = code.replace('from "./account-access"', `from "${mockUrl}"`);
   for (const p of ["@/lib/db/client", "@/lib/browser/browser-manager", "@/lib/browser/youtube-chat", "@/lib/logger/activity-logger", "@/lib/events"]) {
     code = code.replace(`from "${p}"`, `from "${mockUrl}"`);
   }
@@ -55,26 +57,13 @@ async function until(predicate) {
 const temporary = { ok: false, status: "ERROR", retryable: true, reason: "Delivery unconfirmed" };
 const sent = { ok: true, status: "SENT" };
 
-test("Streamlabs ON cancels interval waits; OFF restores only previously running workers", async () => {
-  const f=await fixture([sent,sent]);await f.controller.start('test');await until(()=>f.state.pending.length===1);
-  await f.controller.setStreamlabsMode(true);
-  assert.equal(f.state.pending.length,0);assert.equal(f.controller.streamlabsState().enabled,true);
-  assert.equal((await f.controller.start('test')).started,false);assert.equal(f.state.calls,1);
-  await f.controller.setStreamlabsMode(false);await until(()=>f.state.calls===2&&f.state.pending.length===1);
-  await f.controller.stopAll();
-});
-test("turning Streamlabs OFF does not start a previously stopped automation", async () => {
-  const f=await fixture([]);await f.controller.setStreamlabsMode(true);await f.controller.setStreamlabsMode(false);
-  assert.equal(f.state.calls,0);assert.equal(f.controller.runningCount(),0);
-});
-test("emergency stop clears Streamlabs mode without resuming intervals", async () => {
+test("Streamlabs controls do not interrupt a regular automation", async () => {
   const f=await fixture([sent]);await f.controller.start('test');await until(()=>f.state.pending.length===1);
-  await f.controller.setStreamlabsMode(true);await f.controller.stopAll();await f.controller.setStreamlabsMode(false);
-  assert.equal(f.state.calls,1);assert.equal(f.controller.streamlabsState().enabled,false);assert.equal(f.controller.runningCount(),0);
-});
-test("editing a sequence participant stops Streamlabs without restoring intervals",async()=>{
-  const f=await fixture([]);await f.controller.setStreamlabsMode(true);await f.controller.beforeMutation('test');
-  assert.equal(f.controller.streamlabsState().enabled,false);assert.equal(f.state.calls,0);
+  await f.controller.streamlabsStart();
+  assert.equal(f.state.pending.length,1);assert.equal(f.controller.streamlabsState().enabled,true);assert.equal(f.state.calls,1);
+  await f.controller.streamlabsPause();
+  assert.equal(f.state.pending.length,1);assert.equal(f.controller.isRunning('test'),true);
+  await f.controller.stopAll();
 });
 
 test("retry backoff never shortens the interval and grows to a 15-minute floor", () => {
