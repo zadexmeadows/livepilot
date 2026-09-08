@@ -6,10 +6,12 @@ import ts from "typescript";
 const url = source => `data:text/javascript;base64,${Buffer.from(source).toString("base64")}`;
 const source = async path => ts.transpileModule(await readFile(new URL(path, import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
 const matcherUrl = url(await source("../lib/automation/streamlabs-matcher.ts"));
+const intelligenceUrl = url(await source("../lib/automation/streamlabs-intelligence.ts"));
 const policyUrl = url(await source("../lib/automation/retry-policy.ts"));
 const cancelUrl = url(await source("../lib/automation/cancellation.ts"));
 const controllerSource = await source("../lib/automation/streamlabs-controller.ts");
 const { isHeistAnnouncement, AnnouncementTracker } = await import(matcherUrl);
+const { parsePointsBalance, parseTransfer, parseHeistJoin, parseHeistResults, parseRoll, sameStreamlabsName } = await import(intelligenceUrl);
 const announcement = (id = "event1", author = "Streamlabs", text = "Ahoy! Captain Alice is trying to get a crew together for a treasure hunt! Type !heist [amount] to join.") => ({ id, author, text });
 
 test("matches Streamlabs treasure-hunt announcements only", () => {
@@ -24,6 +26,16 @@ test("announcement tracker baselines history and accepts a new stable id once", 
   assert.deepEqual(tracker.observe([announcement("old")]), []);
   assert.deepEqual(tracker.observe([announcement("old"), announcement("new")]).map(item => item.id), ["new"]);
   assert.deepEqual(tracker.observe([announcement("new")]), []);
+});
+
+test("parses observed Streamlabs balance, transfer, heist, and roll messages", () => {
+  assert.deepEqual(parsePointsBalance("@SARA_KHAN4, you have 30500 Points."), { username: "SARA_KHAN4", balance: 30500 });
+  assert.deepEqual(parseTransfer("RooV gave 50000 Points to 4xhuu."), { donor: "RooV", amount: 50000, recipient: "4xhuu", ok: true });
+  assert.deepEqual(parseTransfer("SARA_PATHAN12 failed to give 10000 Points to SARA_KHAN4. FeelsBadMan"), { donor: "SARA_PATHAN12", amount: 10000, recipient: "SARA_KHAN4", ok: false });
+  assert.deepEqual(parseHeistJoin("Ahoy! @JackTheClipper has joined the treasure hunt."), { username: "JackTheClipper" });
+  assert.deepEqual(parseHeistResults("Results: JackTheClipper (2674), Kevin (2,674)"), { winners: [{ username: "JackTheClipper", payout: 2674 }, { username: "Kevin", payout: 2674 }] });
+  assert.deepEqual(parseRoll("Rolled 66, @RooV won 20000 Points and now has 171300 Points"), { username: "RooV", won: true, amount: 20000, balance: 171300 });
+  assert.ok(sameStreamlabsName("＠ＳＡＲＡ_KHAN4", "sara_khan4"));
 });
 
 let serial = 0;
@@ -46,7 +58,7 @@ export const delay=(ms,signal)=>new Promise((resolve,reject)=>{signal.throwIfAbo
 `);
   const mock = await import(mockUrl);
   mock.state.accounts = Array.from({ length: count }, (_, index) => ({ id: `account${index}`, displayName: `Account ${index}`, status: "CONNECTED", profileDirectory: `/tmp/account${index}` }));
-  let code = controllerSource.replace('from "./streamlabs-matcher"', `from "${matcherUrl}"`).replace('from "./cancellation"', `from "${cancelUrl}"`).replace('from "./retry-policy"', `from "${policyUrl}"`).replace('from "./account-access"', `from "${mockUrl}"`);
+  let code = controllerSource.replace('from "./streamlabs-matcher"', `from "${matcherUrl}"`).replace('from "./streamlabs-intelligence"', `from "${intelligenceUrl}"`).replace('from "./cancellation"', `from "${cancelUrl}"`).replace('from "./retry-policy"', `from "${policyUrl}"`).replace('from "./account-access"', `from "${mockUrl}"`);
   for (const dep of ["@/lib/db/client", "@/lib/browser/browser-manager", "@/lib/browser/youtube-chat", "@/lib/browser/streamlabs-chat", "@/lib/logger/activity-logger", "@/lib/events"]) code = code.replace(`from "${dep}"`, `from "${mockUrl}"`);
   const { StreamlabsController } = await import(url(code));
   const controller = new StreamlabsController(mock.delay);

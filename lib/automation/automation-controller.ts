@@ -38,6 +38,9 @@ export class AutomationController {
   streamlabsStart(config?: StreamlabsConfig) { return this.streamlabs.start(config); }
   streamlabsPause() { return this.streamlabs.pause(); }
   streamlabsStop() { return this.streamlabs.stop(); }
+  streamlabsCheckPoints() { return this.streamlabs.checkPoints(); }
+  streamlabsSweepPoints() { return this.streamlabs.sweepPoints(); }
+  streamlabsCancelPoints() { return this.streamlabs.cancelIntelligence(); }
 
   async beforeMutation(id: string) {
     if (this.isRunning(id)) await this.stop(id);
