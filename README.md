@@ -313,7 +313,7 @@ scripts/                 Database, integration, and headed-browser verification
 The automation engine uses abortable delays, one worker per automation ID, try/catch isolation, and one persistent browser context per account ID. All YouTube selector fallbacks live in one file. The dashboard communicates with local server routes only and exposes no Playwright debugging port.
 ## Streamlabs Mode
 
-Streamlabs Mode is independent of regular automations. Select connected Google profiles, enter their exact Streamlabs usernames, provide one livestream URL and a message pool, and choose the first selected profile as the announcement watcher.
+Streamlabs Mode is independent of regular automations. Select connected Google profiles, provide one livestream URL and a message pool, and choose the first selected profile as the announcement watcher. Balance/result identity and the `!give` recipient are derived automatically from each profile's detected YouTube channel handle; there are no separate Streamlabs-name fields.
 
 - A fresh, stable Streamlabs heist-announcement ID triggers one round. Accounts are shuffled and each selected account sends exactly once, with the configured delay. Messages are independently random unless **No message repeats per round** is enabled.
 - A timer starts a fallback round only when no new announcement arrives. A new announcement always has priority, and an announcement received during a round is queued as one later round rather than replayed.

@@ -40,10 +40,8 @@ export type StreamlabsConfig = {
   delaySeconds: number;
   fallbackSeconds: number;
   noMessageRepeats: boolean;
-  accountUsernames: Record<string, string>;
   heistWager: number;
   bankAccountId: string | null;
-  bankUsername: string;
   bankPresenceMessage: string;
   bankPresenceSeconds: number;
   protectedReserve: number;
@@ -68,7 +66,7 @@ export type StreamlabsState = {
 
 const defaults: StreamlabsConfig = {
   youtubeUrl: "", accountIds: [], messages: [], delaySeconds: 10, fallbackSeconds: 300, noMessageRepeats: false,
-  accountUsernames: {}, heistWager: 1337, bankAccountId: null, bankUsername: "", bankPresenceMessage: ".",
+  heistWager: 1337, bankAccountId: null, bankPresenceMessage: ".",
   bankPresenceSeconds: 120, protectedReserve: 1337, minimumTransfer: 100, maximumTransfer: 5000,
   responseTimeoutSeconds: 20, autoConsolidate: false,
 };
@@ -99,7 +97,7 @@ export class StreamlabsController {
   private pendingAutoSweep = false;
 
   constructor(private readonly delay = cancellableDelay) {}
-  snapshot() { return { ...this.state, participants: [...this.state.participants], config: { ...this.state.config, accountIds: [...this.state.config.accountIds], messages: [...this.state.config.messages], accountUsernames: { ...this.state.config.accountUsernames } }, intelligence: { ...this.state.intelligence, balances: { ...this.state.intelligence.balances }, recentHeists: [...this.state.intelligence.recentHeists], transfers: [...this.state.intelligence.transfers], activeHeist: this.state.intelligence.activeHeist ? { ...this.state.intelligence.activeHeist, participantAccountIds: [...this.state.intelligence.activeHeist.participantAccountIds] } : null } }; }
+  snapshot() { return { ...this.state, participants: [...this.state.participants], config: { ...this.state.config, accountIds: [...this.state.config.accountIds], messages: [...this.state.config.messages] }, intelligence: { ...this.state.intelligence, balances: { ...this.state.intelligence.balances }, recentHeists: [...this.state.intelligence.recentHeists], transfers: [...this.state.intelligence.transfers], activeHeist: this.state.intelligence.activeHeist ? { ...this.state.intelligence.activeHeist, participantAccountIds: [...this.state.intelligence.activeHeist.participantAccountIds] } : null } }; }
   isRunning() { return this.state.enabled || !!this.task; }
   runningCount() { return this.state.enabled ? this.participants.filter(a => !this.blocked.has(a.id)).length : 0; }
 
@@ -108,7 +106,7 @@ export class StreamlabsController {
       db.appSetting.findUnique({ where: { key: "streamlabsConfig" } }),
       db.appSetting.findUnique({ where: { key: "streamlabsIntelligence" } }),
     ]);
-    if (stored) { try { const value = JSON.parse(stored.value); this.state.config = { ...defaults, ...value, accountUsernames: { ...defaults.accountUsernames, ...(value.accountUsernames ?? {}) } }; } catch { /* retain safe defaults */ } }
+    if (stored) { try { const value = JSON.parse(stored.value); delete value.accountUsernames; delete value.bankUsername; this.state.config = { ...defaults, ...value }; } catch { /* retain safe defaults */ } }
     else {
       const legacy = await db.automation.findMany({ where: { googleAccount: { status: "CONNECTED" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
       if (legacy.length) {
@@ -139,7 +137,7 @@ export class StreamlabsController {
   }
 
   private usernameFor(account: GoogleAccount) {
-    return cleanName(this.state.config.accountUsernames[account.id]) || cleanName(account.displayName);
+    return account.channelName?.trim().startsWith("@") ? cleanName(account.channelName) : "";
   }
 
   private accountForUsername(username: string) {
@@ -159,7 +157,7 @@ export class StreamlabsController {
     if (!this.state.enabled || !this.task) throw new Error("Start Streamlabs Mode before checking or consolidating points.");
     if (this.intelligenceTask) throw new Error("A points operation is already running.");
     if (this.state.phase === "SENDING") throw new Error("Wait for the current Streamlabs round to finish.");
-    if (kind === "SWEEPING" && (!this.state.config.bankAccountId || !this.state.config.bankUsername)) throw new Error("Choose a bank account and enter its exact Streamlabs username first.");
+    if (kind === "SWEEPING" && !this.state.config.bankAccountId) throw new Error("Choose a bank account first.");
     this.intelligenceAbort = new AbortController();
     const signal = this.intelligenceAbort.signal;
     await this.publishIntelligence({ phase: kind, currentAccountId: null, lastDecision: automatic ? "Automatic consolidation started after verified heist results." : kind === "CHECKING_POINTS" ? "Checking every selected account balance." : "Consolidating verified balances into the bank account." });
@@ -180,7 +178,6 @@ export class StreamlabsController {
     const incoming: StreamlabsConfig = {
       ...defaults,
       ...config,
-      accountUsernames: { ...defaults.accountUsernames, ...(config.accountUsernames ?? {}) },
     };
     const parsed = parseYouTubeUrl(incoming.youtubeUrl);
     const clean: StreamlabsConfig = {
@@ -190,10 +187,8 @@ export class StreamlabsController {
       delaySeconds: Math.max(1, Math.round(incoming.delaySeconds)),
       fallbackSeconds: Math.max(10, Math.round(incoming.fallbackSeconds)),
       noMessageRepeats: Boolean(incoming.noMessageRepeats),
-      accountUsernames: Object.fromEntries(Object.entries(incoming.accountUsernames).filter(([id, value]) => cleanName(id) && cleanName(value)).map(([id, value]) => [id, cleanName(value)])),
       heistWager: Math.max(1, Math.round(incoming.heistWager)),
       bankAccountId: incoming.bankAccountId || null,
-      bankUsername: cleanName(incoming.bankUsername),
       bankPresenceMessage: incoming.bankPresenceMessage.trim().slice(0, 200) || ".",
       bankPresenceSeconds: Math.max(30, Math.round(incoming.bankPresenceSeconds)),
       protectedReserve: Math.max(0, Math.round(incoming.protectedReserve)),
@@ -206,7 +201,6 @@ export class StreamlabsController {
     if (!clean.messages.length) throw new Error("Add at least one chat message.");
     if (clean.noMessageRepeats && clean.messages.length < clean.accountIds.length) throw new Error("Add at least one unique message per selected account when no repeats is enabled.");
     if (clean.bankAccountId && !clean.accountIds.includes(clean.bankAccountId)) throw new Error("The bank account must be one of the selected accounts.");
-    if (clean.bankAccountId && !clean.bankUsername) throw new Error("Enter the exact Streamlabs username for the bank account.");
     if (clean.maximumTransfer < clean.minimumTransfer) throw new Error("Maximum transfer must be greater than or equal to minimum transfer.");
     const count = await db.googleAccount.count({ where: { id: { in: clean.accountIds }, status: "CONNECTED" } });
     if (count !== clean.accountIds.length) throw new Error("Every selected account must be connected.");
@@ -224,6 +218,8 @@ export class StreamlabsController {
     const byId = new Map(accounts.map(account => [account.id, account]));
     this.participants = cfg.accountIds.map(id => byId.get(id)).filter((account): account is GoogleAccount => !!account);
     if (this.participants.length !== cfg.accountIds.length) throw new Error("Reconnect every selected account before starting Streamlabs Mode.");
+    const missingHandle = this.participants.find(account => !this.usernameFor(account));
+    if (missingHandle) throw new Error(`Reconnect ${missingHandle.displayName} so its YouTube channel handle can be detected.`);
     this.blocked.clear(); this.cooldown.clear(); this.failures.clear();
     this.intelligenceSeen.clear(); this.intelligenceSeeded = false; this.pendingAutoSweep = false;
     this.abort = new AbortController();
@@ -364,7 +360,7 @@ export class StreamlabsController {
       });
       const summary: StreamlabsHeistSummary = { announcementId: active.announcementId, startedAt: active.startedAt, completedAt: new Date().toISOString(), wager: cfg.heistWager, participants: participantResults, totalNet: participantResults.reduce((total, item) => total + item.net, 0), resultsMessageId: message.id };
       await this.publishIntelligence({ activeHeist: null, recentHeists: [summary, ...this.state.intelligence.recentHeists].slice(0, 50), lastDecision: `Heist results recorded: ${participantResults.filter(item => item.outcome === "WON").length} won, ${participantResults.filter(item => item.outcome === "LOST").length} lost, net ${summary.totalNet} points.` });
-      if (cfg.autoConsolidate && cfg.bankAccountId && cfg.bankUsername) this.pendingAutoSweep = true;
+      if (cfg.autoConsolidate && cfg.bankAccountId) this.pendingAutoSweep = true;
     }
   }
 
@@ -405,7 +401,7 @@ export class StreamlabsController {
 
   private async queryBalance(account: GoogleAccount, monitor: Page, signal: AbortSignal, version: number) {
     const username = this.usernameFor(account);
-    if (!username) throw new Error(`Enter the exact Streamlabs username for ${account.displayName}.`);
+    if (!username) throw new Error(`Reconnect ${account.displayName} so its YouTube channel handle can be detected.`);
     const baseline = new Set((await this.currentRows(monitor)).map(row => row.id));
     await this.sendCommand(account, "!points", signal);
     const found = await this.waitForNew(monitor, baseline, signal, version, message => {
@@ -444,13 +440,15 @@ export class StreamlabsController {
     await this.publishIntelligence({ phase: "PRIMING_BANK", currentAccountId: bank.id, lastDecision: "Making the bank account visible to Streamlabs before transfers." });
     const baseline = new Set((await this.currentRows(monitor)).map(row => row.id));
     await this.sendCommand(bank, this.state.config.bankPresenceMessage, signal);
-    await this.waitForNew(monitor, baseline, signal, version, message => sameStreamlabsName(message.author, this.state.config.bankUsername) && message.text.trim() === this.state.config.bankPresenceMessage ? true : null);
+    await this.waitForNew(monitor, baseline, signal, version, message => sameStreamlabsName(message.author, this.usernameFor(bank)) && message.text.trim() === this.state.config.bankPresenceMessage ? true : null);
     return Date.now();
   }
 
   private async runPointsSweep(signal: AbortSignal) {
     const cfg = this.state.config, version = this.announcementVersion, bank = this.participants.find(account => account.id === cfg.bankAccountId);
     if (!bank) throw new Error("The configured bank account is not connected.");
+    const bankUsername = this.usernameFor(bank);
+    if (!bankUsername) throw new Error("Reconnect the bank account so its YouTube channel handle can be detected.");
     const { monitor, source } = await this.operationMonitor(signal);
     let bankPresenceAt = 0;
     try {
@@ -465,16 +463,16 @@ export class StreamlabsController {
           await this.publishIntelligence({ phase: "SWEEPING", currentAccountId: donor.id });
           const amount = Math.min(cfg.maximumTransfer, balance - cfg.protectedReserve);
           const baseline = new Set((await this.currentRows(monitor)).map(row => row.id));
-          await this.sendCommand(donor, `!give ${amount} ${cfg.bankUsername}`, signal);
+          await this.sendCommand(donor, `!give ${amount} ${bankUsername}`, signal);
           let response;
           try {
             response = await this.waitForNew(monitor, baseline, signal, version, message => {
               if (!isStreamlabsMessage(message)) return null;
               const parsed = parseTransfer(message.text);
-              return parsed && sameStreamlabsName(parsed.donor, this.usernameFor(donor)) && sameStreamlabsName(parsed.recipient, cfg.bankUsername) && parsed.amount === amount ? parsed : null;
+              return parsed && sameStreamlabsName(parsed.donor, this.usernameFor(donor)) && sameStreamlabsName(parsed.recipient, bankUsername) && parsed.amount === amount ? parsed : null;
             }, true);
           } catch (error) {
-            const record: StreamlabsTransferRecord = { id: `${Date.now()}-${donor.id}`, donorAccountId: donor.id, bankAccountId: bank.id, donor: this.usernameFor(donor), recipient: cfg.bankUsername, amount, status: "UNCERTAIN", createdAt: new Date().toISOString(), reason: error instanceof Error ? error.message : "Confirmation missing." };
+            const record: StreamlabsTransferRecord = { id: `${Date.now()}-${donor.id}`, donorAccountId: donor.id, bankAccountId: bank.id, donor: this.usernameFor(donor), recipient: bankUsername, amount, status: "UNCERTAIN", createdAt: new Date().toISOString(), reason: error instanceof Error ? error.message : "Confirmation missing." };
             await this.publishIntelligence({ transfers: [record, ...this.state.intelligence.transfers].slice(0, 100), lastDecision: "Transfer delivery is uncertain. It will not be resent until balances are checked manually." });
             throw new Error("A transfer confirmation was not received. No automatic resend was attempted.");
           }

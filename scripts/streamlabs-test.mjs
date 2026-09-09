@@ -57,7 +57,7 @@ export const accountAccess={run:async(id,signal,work)=>{state.access.push(id);si
 export const delay=(ms,signal)=>new Promise((resolve,reject)=>{signal.throwIfAborted();const entry={at:state.now+ms,resolve:()=>{signal.removeEventListener('abort',abort);resolve()}};const abort=()=>{state.pending=state.pending.filter(x=>x!==entry);reject(signal.reason)};state.pending.push(entry);signal.addEventListener('abort',abort,{once:true})});
 `);
   const mock = await import(mockUrl);
-  mock.state.accounts = Array.from({ length: count }, (_, index) => ({ id: `account${index}`, displayName: `Account ${index}`, status: "CONNECTED", profileDirectory: `/tmp/account${index}` }));
+  mock.state.accounts = Array.from({ length: count }, (_, index) => ({ id: `account${index}`, displayName: `Account ${index}`, channelName: `@account${index}`, status: "CONNECTED", profileDirectory: `/tmp/account${index}` }));
   let code = controllerSource.replace('from "./streamlabs-matcher"', `from "${matcherUrl}"`).replace('from "./streamlabs-intelligence"', `from "${intelligenceUrl}"`).replace('from "./cancellation"', `from "${cancelUrl}"`).replace('from "./retry-policy"', `from "${policyUrl}"`).replace('from "./account-access"', `from "${mockUrl}"`);
   for (const dep of ["@/lib/db/client", "@/lib/browser/browser-manager", "@/lib/browser/youtube-chat", "@/lib/browser/streamlabs-chat", "@/lib/logger/activity-logger", "@/lib/events"]) code = code.replace(`from "${dep}"`, `from "${mockUrl}"`);
   const { StreamlabsController } = await import(url(code));

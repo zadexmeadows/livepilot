@@ -15,8 +15,8 @@ export async function POST(request: Request) {
     const configSchema = z.object({
       youtubeUrl: z.string().min(1), accountIds: z.array(z.string().min(1)).min(1), messages: z.array(z.string().min(1)).min(1),
       delaySeconds: z.number().int().min(1).max(3600), fallbackSeconds: z.number().int().min(10).max(86400), noMessageRepeats: z.boolean(),
-      accountUsernames: z.record(z.string(), z.string()), heistWager: z.number().int().min(1).max(1_000_000_000),
-      bankAccountId: z.string().min(1).nullable(), bankUsername: z.string().max(100), bankPresenceMessage: z.string().min(1).max(200),
+      heistWager: z.number().int().min(1).max(1_000_000_000),
+      bankAccountId: z.string().min(1).nullable(), bankPresenceMessage: z.string().min(1).max(200),
       bankPresenceSeconds: z.number().int().min(30).max(3600), protectedReserve: z.number().int().min(0).max(1_000_000_000),
       minimumTransfer: z.number().int().min(1).max(1_000_000_000), maximumTransfer: z.number().int().min(1).max(1_000_000_000),
       responseTimeoutSeconds: z.number().int().min(10).max(120), autoConsolidate: z.boolean(),
