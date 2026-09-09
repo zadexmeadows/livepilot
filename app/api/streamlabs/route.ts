@@ -28,6 +28,7 @@ export async function POST(request: Request) {
       z.object({ action: z.literal("stop") }).strict(),
       z.object({ action: z.literal("check-points") }).strict(),
       z.object({ action: z.literal("sweep-points") }).strict(),
+      z.object({ action: z.literal("transfer-points"), fromAccountId: z.string().min(1), toAccountId: z.string().min(1), amount: z.number().int().positive().max(1_000_000_000) }).strict(),
       z.object({ action: z.literal("cancel-points") }).strict(),
     ]).parse(await request.json());
     if (body.action === "save") return Response.json(await automationController.streamlabsConfigure(body.config));
@@ -36,6 +37,7 @@ export async function POST(request: Request) {
     if (body.action === "stop") return Response.json(await automationController.streamlabsStop());
     if (body.action === "check-points") return Response.json(await automationController.streamlabsCheckPoints());
     if (body.action === "sweep-points") return Response.json(await automationController.streamlabsSweepPoints());
+    if (body.action === "transfer-points") return Response.json(await automationController.streamlabsTransferPoints(body.fromAccountId, body.toAccountId, body.amount));
     return Response.json(await automationController.streamlabsCancelPoints());
   } catch (error) { return apiError(error, "Could not change Streamlabs mode."); }
 }

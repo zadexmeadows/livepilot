@@ -100,3 +100,13 @@ test("no-repeat option uses distinct messages when the pool is large enough", as
   const f = await fixture(t, 3, { noMessageRepeats: true }); await f.enable(); f.state.messages.push(announcement("new")); await f.poll(750); await f.tick(10000); await f.tick(10000);
   assert.equal(new Set(f.state.sends.map(send => send.message)).size, 3);
 });
+
+test("points inquiry can start independently while Streamlabs rounds are off", async t => {
+  const f = await fixture(t, 2);
+  await f.controller.configure(f.config);
+  const state = await f.controller.checkPoints();
+  assert.equal(state.enabled, false);
+  assert.equal(state.intelligence.phase, "CHECKING_POINTS");
+  await f.controller.cancelIntelligence();
+  assert.equal(f.controller.snapshot().intelligence.phase, "IDLE");
+});

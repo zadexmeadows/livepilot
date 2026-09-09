@@ -40,6 +40,7 @@ export class AutomationController {
   streamlabsStop() { return this.streamlabs.stop(); }
   streamlabsCheckPoints() { return this.streamlabs.checkPoints(); }
   streamlabsSweepPoints() { return this.streamlabs.sweepPoints(); }
+  streamlabsTransferPoints(fromAccountId: string, toAccountId: string, amount: number) { return this.streamlabs.transferPoints(fromAccountId, toAccountId, amount); }
   streamlabsCancelPoints() { return this.streamlabs.cancelIntelligence(); }
 
   async beforeMutation(id: string) {
@@ -89,7 +90,7 @@ export class AutomationController {
 
   async stopAll() {
     const sequenceCount = this.streamlabs.runningCount();
-    if (this.streamlabs.snapshot().enabled) await this.streamlabs.stop("Emergency Stop All.");
+    if (this.streamlabs.snapshot().enabled || sequenceCount > 0) await this.streamlabs.stop("Emergency Stop All.");
     const ids = [...this.workers.keys()];
     await Promise.all(ids.map((id) => this.stop(id)));
     await db.automation.updateMany({ where: { status: { in: ["STARTING", "RUNNING", "RETRYING", "WAITING_FOR_STREAM", "RATE_LIMITED", "WAITING_FOR_TRIGGER", "TRIGGER_QUEUED"] } }, data: { status: "STOPPED", nextSendAt: null } });

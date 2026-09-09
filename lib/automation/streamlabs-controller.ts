@@ -26,7 +26,7 @@ export type StreamlabsTransferRecord = {
   amount: number; status: "CONFIRMED" | "FAILED" | "UNCERTAIN"; createdAt: string; responseMessageId?: string; reason?: string;
 };
 export type StreamlabsIntelligenceState = {
-  phase: "IDLE" | "CHECKING_POINTS" | "PRIMING_BANK" | "SWEEPING" | "PAUSED_FOR_HEIST" | "ERROR";
+  phase: "IDLE" | "CHECKING_POINTS" | "PRIMING_BANK" | "SWEEPING" | "TRANSFERRING" | "PAUSED_FOR_HEIST" | "ERROR";
   currentAccountId: string | null; balances: Record<string, StreamlabsBalance>;
   activeHeist: { announcementId: string; captain: string; startedAt: string; participantAccountIds: string[] } | null;
   recentHeists: StreamlabsHeistSummary[]; transfers: StreamlabsTransferRecord[];
@@ -98,8 +98,9 @@ export class StreamlabsController {
 
   constructor(private readonly delay = cancellableDelay) {}
   snapshot() { return { ...this.state, participants: [...this.state.participants], config: { ...this.state.config, accountIds: [...this.state.config.accountIds], messages: [...this.state.config.messages] }, intelligence: { ...this.state.intelligence, balances: { ...this.state.intelligence.balances }, recentHeists: [...this.state.intelligence.recentHeists], transfers: [...this.state.intelligence.transfers], activeHeist: this.state.intelligence.activeHeist ? { ...this.state.intelligence.activeHeist, participantAccountIds: [...this.state.intelligence.activeHeist.participantAccountIds] } : null } }; }
-  isRunning() { return this.state.enabled || !!this.task; }
-  runningCount() { return this.state.enabled ? this.participants.filter(a => !this.blocked.has(a.id)).length : 0; }
+  isRunning() { return this.state.enabled || !!this.task || !!this.intelligenceTask; }
+  hasActiveWork() { return this.isRunning(); }
+  runningCount() { return this.state.enabled ? this.participants.filter(a => !this.blocked.has(a.id)).length : this.intelligenceTask ? 1 : 0; }
 
   async load() {
     const [stored, intelligence] = await Promise.all([
@@ -147,21 +148,45 @@ export class StreamlabsController {
 
   async checkPoints() { return this.startIntelligenceOperation("CHECKING_POINTS"); }
   async sweepPoints() { return this.startIntelligenceOperation("SWEEPING"); }
+  async transferPoints(fromAccountId: string, toAccountId: string, amount: number) {
+    return this.startIntelligenceOperation("TRANSFERRING", false, { fromAccountId, toAccountId, amount });
+  }
   async cancelIntelligence() {
     this.intelligenceAbort?.abort(); await this.intelligenceTask?.catch(() => undefined);
     await this.publishIntelligence({ phase: "IDLE", currentAccountId: null, lastDecision: "Points operation stopped." });
     return this.snapshot();
   }
 
-  private async startIntelligenceOperation(kind: "CHECKING_POINTS" | "SWEEPING", automatic = false) {
-    if (!this.state.enabled || !this.task) throw new Error("Start Streamlabs Mode before checking or consolidating points.");
+  private async prepareIntelligenceParticipants() {
+    await this.load();
+    const cfg = this.state.config;
+    if (!cfg.youtubeUrl || !cfg.accountIds.length) throw new Error("Configure the livestream and select accounts in Streamlabs Mode first.");
+    const accounts = await db.googleAccount.findMany({ where: { id: { in: cfg.accountIds }, status: "CONNECTED" } });
+    const byId = new Map(accounts.map(account => [account.id, account]));
+    this.participants = cfg.accountIds.map(id => byId.get(id)).filter((account): account is GoogleAccount => !!account);
+    if (this.participants.length !== cfg.accountIds.length) throw new Error("Reconnect every selected account before using Points Bank.");
+    const missingHandle = this.participants.find(account => !this.usernameFor(account));
+    if (missingHandle) throw new Error(`Reconnect ${missingHandle.displayName} so its YouTube channel handle can be detected.`);
+  }
+
+  private async startIntelligenceOperation(kind: "CHECKING_POINTS" | "SWEEPING" | "TRANSFERRING", automatic = false, transfer?: { fromAccountId: string; toAccountId: string; amount: number }) {
     if (this.intelligenceTask) throw new Error("A points operation is already running.");
+    const standalone = !this.state.enabled && !this.task;
+    if (standalone) await this.prepareIntelligenceParticipants();
     if (this.state.phase === "SENDING") throw new Error("Wait for the current Streamlabs round to finish.");
     if (kind === "SWEEPING" && !this.state.config.bankAccountId) throw new Error("Choose a bank account first.");
+    if (kind === "TRANSFERRING" && !transfer) throw new Error("Transfer details are required.");
+    if (kind === "TRANSFERRING" && transfer) {
+      if (!this.participants.some(account => account.id === transfer.fromAccountId) || !this.participants.some(account => account.id === transfer.toAccountId)) throw new Error("Choose two connected Points Bank accounts.");
+      if (transfer.fromAccountId === transfer.toAccountId) throw new Error("Sender and recipient must be different accounts.");
+      if (!Number.isFinite(transfer.amount) || !Number.isInteger(transfer.amount) || transfer.amount < 1) throw new Error("Transfer amount must be a positive whole number.");
+      if (transfer.amount > this.state.config.maximumTransfer) throw new Error(`Transfer amount cannot exceed the configured ${this.state.config.maximumTransfer}-point limit.`);
+    }
     this.intelligenceAbort = new AbortController();
     const signal = this.intelligenceAbort.signal;
-    await this.publishIntelligence({ phase: kind, currentAccountId: null, lastDecision: automatic ? "Automatic consolidation started after verified heist results." : kind === "CHECKING_POINTS" ? "Checking every selected account balance." : "Consolidating verified balances into the bank account." });
-    this.intelligenceTask = (kind === "CHECKING_POINTS" ? this.runPointsCheck(signal) : this.runPointsSweep(signal)).catch(async error => {
+    await this.publishIntelligence({ phase: kind, currentAccountId: null, lastDecision: automatic ? "Automatic consolidation started after verified heist results." : kind === "CHECKING_POINTS" ? "Checking every selected account balance." : kind === "SWEEPING" ? "Consolidating verified balances into the bank account." : "Preparing a verified account-to-account transfer." });
+    const work = kind === "CHECKING_POINTS" ? this.runPointsCheck(signal) : kind === "SWEEPING" ? this.runPointsSweep(signal) : this.runDirectTransfer(signal, transfer!);
+    this.intelligenceTask = work.catch(async error => {
       if (signal.aborted || error instanceof DOMException && error.name === "AbortError") return;
       const reason = error instanceof Error ? error.message : "Points operation failed.";
       await this.publishIntelligence({ phase: reason === "HEIST_PRIORITY" ? "PAUSED_FOR_HEIST" : "ERROR", currentAccountId: null, lastDecision: reason === "HEIST_PRIORITY" ? "A new heist announcement took priority. Consolidation will wait." : reason });
@@ -169,6 +194,10 @@ export class StreamlabsController {
     }).finally(async () => {
       this.intelligenceTask = undefined; this.intelligenceAbort = undefined;
       if (this.state.intelligence.phase !== "ERROR" && this.state.intelligence.phase !== "PAUSED_FOR_HEIST") await this.publishIntelligence({ phase: "IDLE", currentAccountId: null, lastOperationAt: new Date().toISOString() });
+      if (standalone) {
+        for (const account of this.participants) { const page = this.pages.get(account.id); if (page) await browserManager.closePage(account.id, page); }
+        this.pages.clear();
+      }
     });
     return this.snapshot();
   }
@@ -212,6 +241,7 @@ export class StreamlabsController {
   async start(config?: StreamlabsConfig) {
     if (config) await this.configure(config); else await this.load();
     if (this.state.enabled || this.task) throw new Error("Streamlabs Mode is already running.");
+    if (this.intelligenceTask) throw new Error("Stop the active Points Bank operation before starting Streamlabs Mode.");
     const cfg = this.state.config;
     if (!cfg.youtubeUrl || !cfg.accountIds.length || !cfg.messages.length) throw new Error("Complete and save the Streamlabs settings first.");
     const accounts = await db.googleAccount.findMany({ where: { id: { in: cfg.accountIds }, status: "CONNECTED" } });
@@ -436,12 +466,52 @@ export class StreamlabsController {
     } finally { await browserManager.closePage(source.id, monitor); }
   }
 
-  private async ensureBankPresence(bank: GoogleAccount, monitor: Page, signal: AbortSignal, version: number) {
-    await this.publishIntelligence({ phase: "PRIMING_BANK", currentAccountId: bank.id, lastDecision: "Making the bank account visible to Streamlabs before transfers." });
+  private async ensureRecipientPresence(recipient: GoogleAccount, monitor: Page, signal: AbortSignal, version: number) {
+    await this.publishIntelligence({ phase: "PRIMING_BANK", currentAccountId: recipient.id, lastDecision: `Making ${recipient.displayName} visible to Streamlabs before transfers.` });
     const baseline = new Set((await this.currentRows(monitor)).map(row => row.id));
-    await this.sendCommand(bank, this.state.config.bankPresenceMessage, signal);
-    await this.waitForNew(monitor, baseline, signal, version, message => sameStreamlabsName(message.author, this.usernameFor(bank)) && message.text.trim() === this.state.config.bankPresenceMessage ? true : null);
+    await this.sendCommand(recipient, this.state.config.bankPresenceMessage, signal);
+    await this.waitForNew(monitor, baseline, signal, version, message => sameStreamlabsName(message.author, this.usernameFor(recipient)) && message.text.trim() === this.state.config.bankPresenceMessage ? true : null);
     return Date.now();
+  }
+
+  private async runDirectTransfer(signal: AbortSignal, request: { fromAccountId: string; toAccountId: string; amount: number }) {
+    const cfg = this.state.config;
+    const donor = this.participants.find(account => account.id === request.fromAccountId);
+    const recipient = this.participants.find(account => account.id === request.toAccountId);
+    const amount = Math.round(request.amount);
+    if (!donor || !recipient) throw new Error("Choose two connected Points Bank accounts.");
+    if (donor.id === recipient.id) throw new Error("Sender and recipient must be different accounts.");
+    if (!Number.isFinite(amount) || amount < 1) throw new Error("Transfer amount must be a positive whole number.");
+    if (amount > cfg.maximumTransfer) throw new Error(`Transfer amount cannot exceed the configured ${cfg.maximumTransfer}-point limit.`);
+    const recipientUsername = this.usernameFor(recipient), version = this.announcementVersion;
+    const { monitor, source } = await this.operationMonitor(signal);
+    try {
+      await this.ensureRecipientPresence(recipient, monitor, signal, version);
+      const balance = await this.queryBalance(donor, monitor, signal, version);
+      if (balance - amount < cfg.protectedReserve) throw new Error(`${donor.displayName} must keep the configured ${cfg.protectedReserve}-point reserve.`);
+      await this.publishIntelligence({ phase: "TRANSFERRING", currentAccountId: donor.id });
+      const baseline = new Set((await this.currentRows(monitor)).map(row => row.id));
+      await this.sendCommand(donor, `!give ${amount} ${recipientUsername}`, signal);
+      let response;
+      try {
+        response = await this.waitForNew(monitor, baseline, signal, version, message => {
+          if (!isStreamlabsMessage(message)) return null;
+          const parsed = parseTransfer(message.text);
+          return parsed && sameStreamlabsName(parsed.donor, this.usernameFor(donor)) && sameStreamlabsName(parsed.recipient, recipientUsername) && parsed.amount === amount ? parsed : null;
+        }, true);
+      } catch (error) {
+        const record: StreamlabsTransferRecord = { id: `${Date.now()}-${donor.id}`, donorAccountId: donor.id, bankAccountId: recipient.id, donor: this.usernameFor(donor), recipient: recipientUsername, amount, status: "UNCERTAIN", createdAt: new Date().toISOString(), reason: error instanceof Error ? error.message : "Confirmation missing." };
+        await this.publishIntelligence({ transfers: [record, ...this.state.intelligence.transfers].slice(0, 100), lastDecision: "Transfer delivery is uncertain. It will not be resent automatically." });
+        throw new Error("A transfer confirmation was not received. No automatic resend was attempted.");
+      }
+      const record: StreamlabsTransferRecord = { id: `${Date.now()}-${donor.id}`, donorAccountId: donor.id, bankAccountId: recipient.id, donor: response.value.donor, recipient: response.value.recipient, amount, status: response.value.ok ? "CONFIRMED" : "FAILED", createdAt: new Date().toISOString(), responseMessageId: response.row.id, reason: response.value.ok ? undefined : "Streamlabs rejected the transfer." };
+      await this.publishIntelligence({ transfers: [record, ...this.state.intelligence.transfers].slice(0, 100), lastDecision: response.value.ok ? `${amount} points transferred from ${record.donor} to ${record.recipient}.` : `Streamlabs rejected the transfer from ${record.donor}.` });
+      await activityLog({ action: response.value.ok ? "STREAMLABS_TRANSFER_CONFIRMED" : "STREAMLABS_TRANSFER_FAILED", level: response.value.ok ? "SUCCESS" : "WARNING", status: response.value.ok ? "RUNNING" : "ERROR", message: response.value.ok ? `${record.donor} transferred ${amount} points to ${record.recipient}.` : `${record.donor}'s transfer was rejected by Streamlabs.` });
+      if (!response.value.ok) return;
+      if (response.heistPriority || this.announcementVersion !== version) throw new Error("HEIST_PRIORITY");
+      await this.queryBalance(donor, monitor, signal, version);
+      await this.queryBalance(recipient, monitor, signal, version);
+    } finally { await browserManager.closePage(source.id, monitor); }
   }
 
   private async runPointsSweep(signal: AbortSignal) {
@@ -452,14 +522,14 @@ export class StreamlabsController {
     const { monitor, source } = await this.operationMonitor(signal);
     let bankPresenceAt = 0;
     try {
-      bankPresenceAt = await this.ensureBankPresence(bank, monitor, signal, version);
+      bankPresenceAt = await this.ensureRecipientPresence(bank, monitor, signal, version);
       await this.publishIntelligence({ phase: "SWEEPING" });
       for (const donor of this.participants.filter(account => account.id !== bank.id)) {
         if (this.announcementVersion !== version) throw new Error("HEIST_PRIORITY");
         let balance = await this.queryBalance(donor, monitor, signal, version);
         while (balance - cfg.protectedReserve >= cfg.minimumTransfer) {
           if (this.announcementVersion !== version) throw new Error("HEIST_PRIORITY");
-          if (Date.now() - bankPresenceAt > cfg.bankPresenceSeconds * 1000) bankPresenceAt = await this.ensureBankPresence(bank, monitor, signal, version);
+          if (Date.now() - bankPresenceAt > cfg.bankPresenceSeconds * 1000) bankPresenceAt = await this.ensureRecipientPresence(bank, monitor, signal, version);
           await this.publishIntelligence({ phase: "SWEEPING", currentAccountId: donor.id });
           const amount = Math.min(cfg.maximumTransfer, balance - cfg.protectedReserve);
           const baseline = new Set((await this.currentRows(monitor)).map(row => row.id));
