@@ -453,8 +453,20 @@ export class StreamlabsController {
 
   private async sendCommand(account: GoogleAccount, command: string, signal: AbortSignal) {
     await this.publishIntelligence({ currentAccountId: account.id });
-    const result = await accountAccess.run(account.id, signal, () => this.pageFor(account.id, signal).then(page => sendChatMessage(page, this.state.config.youtubeUrl, command, signal, { prepared: true })));
-    if (!result.ok) throw new Error(result.reason ?? `YouTube did not accept ${command}.`);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await accountAccess.run(account.id, signal, () => this.pageFor(account.id, signal).then(page => sendChatMessage(page, this.state.config.youtubeUrl, command, signal, { prepared: true })));
+      if (result.ok) return;
+      // This response happens before the composer is used, so retrying once on
+      // a fresh page is safe. Never retry post-send uncertainty automatically.
+      if (attempt === 0 && result.retryable && result.reason === "Could not confirm the signed-in YouTube account while the page loaded.") {
+        const page = this.pages.get(account.id);
+        if (page) await browserManager.closePage(account.id, page);
+        this.pages.delete(account.id);
+        await this.delay(1500, signal);
+        continue;
+      }
+      throw new Error(`${account.displayName}: ${result.reason ?? `YouTube did not accept ${command}.`}`);
+    }
   }
 
   private async queryBalance(account: GoogleAccount, monitor: Page, signal: AbortSignal, version: number) {
@@ -544,7 +556,7 @@ export class StreamlabsController {
 
   private async runPointsSweep(signal: AbortSignal) {
     const cfg = this.state.config, version = this.announcementVersion, bank = this.participants.find(account => account.id === cfg.bankAccountId);
-    if (!bank) throw new Error("The configured bank account is not connected.");
+    if (!bank) throw new Error("The configured bank account is not connected or is no longer selected.");
     const bankUsername = this.usernameFor(bank);
     if (!bankUsername) throw new Error("Reconnect the bank account so its YouTube channel handle can be detected.");
     const { monitor, source } = await this.operationMonitor(signal);
