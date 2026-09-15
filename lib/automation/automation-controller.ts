@@ -35,6 +35,7 @@ export class AutomationController {
 
   streamlabsLoad() { return this.streamlabs.load(); }
   streamlabsConfigure(config: StreamlabsConfig) { return this.streamlabs.configure(config); }
+  streamlabsUpdateYouTubeUrl(youtubeUrl: string) { return this.streamlabs.updateYouTubeUrl(youtubeUrl); }
   streamlabsStart(config?: StreamlabsConfig) { return this.streamlabs.start(config); }
   streamlabsPause() { return this.streamlabs.pause(); }
   streamlabsStop() { return this.streamlabs.stop(); }

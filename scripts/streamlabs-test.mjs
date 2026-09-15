@@ -119,3 +119,12 @@ test("loading removes deleted account ids from saved configuration", async t => 
   assert.equal(state.config.bankAccountId, null);
   assert.deepEqual(JSON.parse(f.state.settings.streamlabsConfig).accountIds, ["account0", "account1"]);
 });
+
+test("livestream URL can be saved independently from the full settings form", async t => {
+  const f = await fixture(t, 2);
+  await f.controller.configure(f.config);
+  const state = await f.controller.updateYouTubeUrl("https://www.youtube.com/watch?v=newVideo123");
+  assert.equal(state.config.youtubeUrl, "https://www.youtube.com/watch?v=newVideo123");
+  assert.equal(JSON.parse(f.state.settings.streamlabsConfig).youtubeUrl, "https://www.youtube.com/watch?v=newVideo123");
+  assert.equal(f.state.logs.at(-1).action, "STREAMLABS_URL_UPDATED");
+});

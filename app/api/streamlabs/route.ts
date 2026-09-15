@@ -23,6 +23,7 @@ export async function POST(request: Request) {
     }).strict();
     const body = z.discriminatedUnion("action", [
       z.object({ action: z.literal("save"), config: configSchema }).strict(),
+      z.object({ action: z.literal("save-url"), youtubeUrl: z.string().min(1).max(500) }).strict(),
       z.object({ action: z.literal("start"), config: configSchema.optional() }).strict(),
       z.object({ action: z.literal("pause") }).strict(),
       z.object({ action: z.literal("stop") }).strict(),
@@ -32,6 +33,7 @@ export async function POST(request: Request) {
       z.object({ action: z.literal("cancel-points") }).strict(),
     ]).parse(await request.json());
     if (body.action === "save") return Response.json(await automationController.streamlabsConfigure(body.config));
+    if (body.action === "save-url") return Response.json(await automationController.streamlabsUpdateYouTubeUrl(body.youtubeUrl));
     if (body.action === "start") return Response.json(await automationController.streamlabsStart(body.config));
     if (body.action === "pause") return Response.json(await automationController.streamlabsPause());
     if (body.action === "stop") return Response.json(await automationController.streamlabsStop());

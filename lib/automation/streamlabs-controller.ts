@@ -255,6 +255,17 @@ export class StreamlabsController {
     return this.snapshot();
   }
 
+  async updateYouTubeUrl(youtubeUrl: string) {
+    if (this.isRunning()) throw new Error("Pause or stop Streamlabs Mode before changing the livestream URL.");
+    await this.load();
+    const parsed = parseYouTubeUrl(youtubeUrl);
+    const config = { ...this.state.config, youtubeUrl: parsed.canonicalUrl };
+    await db.appSetting.upsert({ where: { key: "streamlabsConfig" }, create: { key: "streamlabsConfig", value: JSON.stringify(config) }, update: { value: JSON.stringify(config) } });
+    await this.publish({ config, reason: null });
+    await activityLog({ action: "STREAMLABS_URL_UPDATED", level: "SUCCESS", status: "COMPLETED", message: "Streamlabs livestream URL was updated." });
+    return this.snapshot();
+  }
+
   async start(config?: StreamlabsConfig) {
     if (config) await this.configure(config); else await this.load();
     if (this.state.enabled || this.task) throw new Error("Streamlabs Mode is already running.");
