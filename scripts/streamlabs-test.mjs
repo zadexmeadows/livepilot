@@ -45,7 +45,7 @@ export const state={now:2000000000000,accounts:[],logs:[],sends:[],messages:[],p
 export const db={
  appSetting:{findUnique:async({where})=>state.settings[where.key]?{value:state.settings[where.key]}:null,upsert:async({where,create,update})=>{state.settings[where.key]=(state.settings[where.key]?update:create).value},create:async({data})=>{state.settings[data.key]=data.value}},
  automation:{findMany:async()=>[]},
- googleAccount:{count:async({where})=>state.accounts.filter(a=>where.id.in.includes(a.id)&&a.status===where.status).length,findMany:async({where})=>state.accounts.filter(a=>where.id.in.includes(a.id)&&a.status===where.status),findUniqueOrThrow:async({where})=>state.accounts.find(a=>a.id===where.id)},
+ googleAccount:{count:async({where})=>state.accounts.filter(a=>where.id.in.includes(a.id)&&a.status===where.status).length,findMany:async({where})=>state.accounts.filter(a=>where.id.in.includes(a.id)&&(!where.status||a.status===where.status)),findUniqueOrThrow:async({where})=>state.accounts.find(a=>a.id===where.id)},
  streamlabsTrigger:{create:async({data})=>{const key=data.videoId+'/'+data.messageId;if(state.claims.has(key))throw {code:'P2002'};state.claims.add(key)}}
 };
 export const browserManager={newPage:async accountId=>{const page={accountId,closed:false,isClosed(){return this.closed},async goto(){},async close(){this.closed=true}};state.pages.push(page);return page},closePage:async(id,page)=>{if(id!==page.accountId)throw Error('isolation');await page.close()}};
@@ -109,4 +109,13 @@ test("points inquiry can start independently while Streamlabs rounds are off", a
   assert.equal(state.intelligence.phase, "CHECKING_POINTS");
   await f.controller.cancelIntelligence();
   assert.equal(f.controller.snapshot().intelligence.phase, "IDLE");
+});
+
+test("loading removes deleted account ids from saved configuration", async t => {
+  const f = await fixture(t, 2);
+  f.state.settings.streamlabsConfig = JSON.stringify({ ...f.config, accountIds: ["account0", "deleted-account", "account1"], bankAccountId: "deleted-account" });
+  const state = await f.controller.load();
+  assert.deepEqual(state.config.accountIds, ["account0", "account1"]);
+  assert.equal(state.config.bankAccountId, null);
+  assert.deepEqual(JSON.parse(f.state.settings.streamlabsConfig).accountIds, ["account0", "account1"]);
 });

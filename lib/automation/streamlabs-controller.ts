@@ -107,7 +107,24 @@ export class StreamlabsController {
       db.appSetting.findUnique({ where: { key: "streamlabsConfig" } }),
       db.appSetting.findUnique({ where: { key: "streamlabsIntelligence" } }),
     ]);
-    if (stored) { try { const value = JSON.parse(stored.value); delete value.accountUsernames; delete value.bankUsername; this.state.config = { ...defaults, ...value }; } catch { /* retain safe defaults */ } }
+    if (stored) {
+      try {
+        const value = JSON.parse(stored.value);
+        delete value.accountUsernames; delete value.bankUsername;
+        const loaded = { ...defaults, ...value } as StreamlabsConfig;
+        loaded.accountIds = Array.isArray(loaded.accountIds) ? [...new Set(loaded.accountIds.filter((id): id is string => typeof id === "string" && !!id))] : [];
+        const existing = loaded.accountIds.length
+          ? await db.googleAccount.findMany({ where: { id: { in: loaded.accountIds } }, select: { id: true } })
+          : [];
+        const existingIds = new Set(existing.map(account => account.id));
+        const accountIds = loaded.accountIds.filter(id => existingIds.has(id));
+        const bankAccountId = loaded.bankAccountId && accountIds.includes(loaded.bankAccountId) ? loaded.bankAccountId : null;
+        this.state.config = { ...loaded, accountIds, bankAccountId };
+        if (accountIds.length !== loaded.accountIds.length || bankAccountId !== loaded.bankAccountId) {
+          await db.appSetting.upsert({ where: { key: "streamlabsConfig" }, create: { key: "streamlabsConfig", value: JSON.stringify(this.state.config) }, update: { value: JSON.stringify(this.state.config) } });
+        }
+      } catch { /* retain safe defaults */ }
+    }
     else {
       const legacy = await db.automation.findMany({ where: { googleAccount: { status: "CONNECTED" } }, orderBy: [{ createdAt: "asc" }, { id: "asc" }] });
       if (legacy.length) {
