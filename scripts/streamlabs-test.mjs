@@ -128,3 +128,9 @@ test("livestream URL can be saved independently from the full settings form", as
   assert.equal(JSON.parse(f.state.settings.streamlabsConfig).youtubeUrl, "https://www.youtube.com/watch?v=newVideo123");
   assert.equal(f.state.logs.at(-1).action, "STREAMLABS_URL_UPDATED");
 });
+
+test("points transfers put the recipient username before the amount", () => {
+  assert.match(controllerSource, /`!give \$\{recipientUsername\} \$\{amount\}`/);
+  assert.match(controllerSource, /`!give \$\{bankUsername\} \$\{amount\}`/);
+  assert.doesNotMatch(controllerSource, /`!give \$\{amount\} \$\{(?:recipientUsername|bankUsername)\}`/);
+});

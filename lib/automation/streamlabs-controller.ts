@@ -531,7 +531,7 @@ export class StreamlabsController {
       if (balance - amount < cfg.protectedReserve) throw new Error(`${donor.displayName} must keep the configured ${cfg.protectedReserve}-point reserve.`);
       await this.publishIntelligence({ phase: "TRANSFERRING", currentAccountId: donor.id });
       const baseline = new Set((await this.currentRows(monitor)).map(row => row.id));
-      await this.sendCommand(donor, `!give ${amount} ${recipientUsername}`, signal);
+      await this.sendCommand(donor, `!give ${recipientUsername} ${amount}`, signal);
       let response;
       try {
         response = await this.waitForNew(monitor, baseline, signal, version, message => {
@@ -573,7 +573,7 @@ export class StreamlabsController {
           await this.publishIntelligence({ phase: "SWEEPING", currentAccountId: donor.id });
           const amount = Math.min(cfg.maximumTransfer, balance - cfg.protectedReserve);
           const baseline = new Set((await this.currentRows(monitor)).map(row => row.id));
-          await this.sendCommand(donor, `!give ${amount} ${bankUsername}`, signal);
+          await this.sendCommand(donor, `!give ${bankUsername} ${amount}`, signal);
           let response;
           try {
             response = await this.waitForNew(monitor, baseline, signal, version, message => {
