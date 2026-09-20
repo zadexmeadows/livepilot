@@ -9,6 +9,7 @@ import { emitDashboardEvent } from "@/lib/events";
 import { AnnouncementTracker, isHeistAnnouncement, type ChatAnnouncement } from "./streamlabs-matcher";
 import { cancellableDelay } from "./cancellation";
 import { accountAccess } from "./account-access";
+import { captureBankRound } from "../bank/streamlabs-adapter";
 import { isTransientBrowserError, MAX_TRANSIENT_RETRIES, retryDelaySeconds } from "./retry-policy";
 import {
   isStreamlabsMessage, normalizeStreamlabsName, parseHeistCaptain, parseHeistJoin,
@@ -103,6 +104,7 @@ export class StreamlabsController {
   runningCount() { return this.state.enabled ? this.participants.filter(a => !this.blocked.has(a.id)).length : this.intelligenceTask ? 1 : 0; }
 
   async load() {
+    if (this.isRunning()) return this.snapshot();
     const [stored, intelligence] = await Promise.all([
       db.appSetting.findUnique({ where: { key: "streamlabsConfig" } }),
       db.appSetting.findUnique({ where: { key: "streamlabsIntelligence" } }),
@@ -380,6 +382,7 @@ export class StreamlabsController {
   }
 
   private async processIntelligenceMessage(message: ChatAnnouncement) {
+    await captureBankRound(this.state.config.youtubeUrl, message, this.state.config.heistWager);
     const balance = parsePointsBalance(message.text), roll = parseRoll(message.text), transfer = parseTransfer(message.text);
     const captain = parseHeistCaptain(message.text), joined = parseHeistJoin(message.text), results = parseHeistResults(message.text);
     if (balance) {

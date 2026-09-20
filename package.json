@@ -2,7 +2,9 @@
   "name": "youtube-live-chat-automation-dashboard",
   "version": "1.0.0",
   "private": true,
-  "engines": { "node": ">=22.13.0" },
+  "engines": {
+    "node": ">=22.13.0"
+  },
   "scripts": {
     "dev": "next dev --hostname 127.0.0.1",
     "build": "next build",
@@ -18,6 +20,7 @@
     "test:limits": "node --test scripts/session-limits-test.mjs",
     "test:retries": "node --test scripts/retry-controller-test.mjs",
     "test:streamlabs": "node --test scripts/streamlabs-test.mjs",
+    "test:bank": "tsx --test scripts/bank-ledger-test.mjs",
     "test:browser": "node scripts/browser-smoke-test.mjs"
   },
   "dependencies": {
@@ -43,6 +46,7 @@
     "eslint-config-next": "16.3.3",
     "prisma": "6.12.0",
     "tailwindcss": "4.2.1",
+    "tsx": "^4.20.6",
     "typescript": "5.9.3"
   }
 }
